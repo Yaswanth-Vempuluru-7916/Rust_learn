@@ -1,4 +1,4 @@
-use tokio::net::TcpListener;
+use tokio::{net::TcpListener, sync::mpsc};
 use tokio_tungstenite::accept_async;
 use tokio_tungstenite::tungstenite::protocol::Message;
 use anyhow::Result;
@@ -10,6 +10,8 @@ use std::collections::HashMap;
 type ClientId = u32;
 type ClientSink = tokio_tungstenite::WebSocketStream<tokio::net::TcpStream>;
 type ClientMap = Arc<Mutex<HashMap<ClientId, futures_util::stream::SplitSink<ClientSink, Message>>>>;
+// Channel sender type for broadcasting messages
+type Sender = mpsc::Sender<(ClientId,Message)>;
 #[tokio::main]
 async fn main() -> Result<()> {
     
@@ -19,25 +21,49 @@ async fn main() -> Result<()> {
 
     //shared State for all clients 
     let clients : ClientMap = Arc::new(Mutex::new(HashMap::new()));
+
+    //Create a channel for broadcasting
+    let (tx , mut rx) = mpsc::channel::<(ClientId,Message)>(100);
+
+    //Spawn a broadcaster task
+    let clients_clone = clients.clone();
+
+    tokio::spawn(async move {
+        while let Some((sender_id ,msg)) = rx.recv().await{
+            let mut clients_guard = clients_clone.lock().await;
+
+            for (client_id , ws_sink) in clients_guard.iter_mut(){
+                // Locks the clients map, loops through all SplitSinks, and sends the message to everyone except the sender.
+                if *client_id != sender_id {
+                    if let Err(e) = ws_sink.send(msg.clone()).await {
+                        println!("Error sending to client {}: {}", client_id, e);
+                    }
+                }
+            }
+
+        }
+    });
+
     let mut client_id_counter = 0;
 
     while let Ok((stream ,_)) = listener.accept().await{
         let client_id = client_id_counter;
         client_id_counter+=1;
         let clients_clone = clients.clone();
-        tokio::spawn(handle_connection(client_id ,stream , clients_clone));
+        let tx_clone = tx.clone();
+        tokio::spawn(handle_connection(client_id ,stream , clients_clone, tx_clone));
     }
     Ok(())
 }
 
-async fn handle_connection(client_id : ClientId,stream : tokio::net::TcpStream,clients : ClientMap) -> Result<()>{
+async fn handle_connection(client_id : ClientId,stream : tokio::net::TcpStream,clients : ClientMap , tx : Sender) -> Result<()>{
+   
     let  ws_stream = accept_async(stream).await?;
     println!("Client {}: WebSocket connection established", client_id);
-
+    
+    // Split and store the Sink
     let (ws_sink, mut ws_stream) = ws_stream.split();
-
     // Add client to the shared map
-
     {
         let mut clients_guard = clients.lock().await; 
         clients_guard.insert(client_id, ws_sink);
@@ -45,6 +71,7 @@ async fn handle_connection(client_id : ClientId,stream : tokio::net::TcpStream,c
 
     }
 
+    // Handle incoming messages
     while let Some(msg) = ws_stream.next().await {
         // ws_stream.next() returns an Option<Result<Message>>, so this unwraps the Result
         //  to get the actual Message (e.g., text or binary data).
@@ -54,11 +81,16 @@ async fn handle_connection(client_id : ClientId,stream : tokio::net::TcpStream,c
             let received_text = msg.to_text()?;
             println!("Client {} received message: {}", client_id, received_text);
 
-            let mut clients_guard = clients.lock().await;
-            if let Some(ws_sink) = clients_guard.get_mut(&client_id) {
-                ws_sink.send(Message::Text(received_text.into())).await?;
-            }
+            // let mut clients_guard = clients.lock().await;
+            // if let Some(ws_sink) = clients_guard.get_mut(&client_id) {
+            //     ws_sink.send(Message::Text(received_text.into())).await?;
+            // }
             
+            // Send to the broadcaster via the channel
+            let broadcast_msg = Message::Text(received_text.into());
+            if let Err(e) = tx.send((client_id,broadcast_msg)).await {
+                println!("Failed to queue message from client {}: {}", client_id, e);
+            }
             
         }
     }
