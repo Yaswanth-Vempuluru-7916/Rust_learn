@@ -41,14 +41,21 @@ async fn main() -> Result<()> {
     tokio::spawn(async move {
         while let Some((sender_id ,msg)) = rx.recv().await{
             let mut clients_guard = clients_clone.lock().await;
+            let mut disconnected_clients = Vec::new();
 
             for (client_id , ws_sink) in clients_guard.iter_mut(){
                 // Locks the clients map, loops through all SplitSinks, and sends the message to everyone except the sender.
                 if *client_id != sender_id {
                     if let Err(e) = ws_sink.send(msg.clone()).await {
                         println!("Error sending to client {}: {}", client_id, e);
+                        disconnected_clients.push(*client_id);
                     }
                 }
+            }
+
+            for client_id in disconnected_clients{
+                clients_guard.remove(&client_id);
+                println!("Removed disconnected client {}. Total clients: {}", client_id, clients_guard.len());
             }
 
         }
@@ -130,6 +137,9 @@ async fn handle_connection(client_id : ClientId,stream : tokio::net::TcpStream,c
 
                         AppMessage::Leave { sender } =>{
                             println!("Client {} requested to leave", sender);
+                            let broadcast_msg = AppMessage::Leave { sender };
+                            let json = serde_json::to_string(&broadcast_msg)?;
+                            tx.send((client_id,Message::Text(json.into()))).await?;
                         }
                     }
                 }
