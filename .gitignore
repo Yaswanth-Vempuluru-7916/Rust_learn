@@ -1,3 +1,6 @@
 **/target/
 **/target/debug/
 **/target/release/
+# Ignore compiled binaries and debug files
+*.exe
+*.pdb
