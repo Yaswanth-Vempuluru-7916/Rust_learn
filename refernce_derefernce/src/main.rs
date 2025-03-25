@@ -1,13 +1,68 @@
-// //!Pointer Safety Principle: data should never be aliased and mutated at the same time.
+// fn main(){
+//     // let mut v = vec![1,2,3];
+//     // let num = &v[2];
+//     // println!("Third element is {}", *num);
+//     // v.push(4);
+
+//     // println!("Third element is {}", *num);
+
+//     // let x = 0;
+//     // let mut x_ref = &x;
+//     // *x_ref+=1;
+//     // //!!x_ref has the W permission, while *x_ref does not
+
+//     //** immutable reference removes WRITE permission from the parent but READ intact */
+
+//     let mut v = vec![1,2,3,4]; // R W O all gone
+//     let num = &mut v[2];
+//     // num --> R O
+//     // *num -> R W 
+
+//     let num2 = &*num;
+//     // num2 --> R    *num -->R
+//     // 
+//     println!("{} {}", *num, *num2);
+
+
+// }
 
 fn main(){
-
-    // let mut v = vec![1,2,3];
-    // let num = &v[1];
-    // v.push(4);
-    // println!("Third element is {}", *num);
-    
+    let mut v = vec!['a','b','c'];
+    ascii_capitalize(&mut v);
 }
+fn ascii_capitalize(v: &mut Vec<char>) {
+    let c = &v[0];
+    if c.is_ascii_lowercase() {
+        let up = c.to_ascii_uppercase();
+        v[0] = up;
+
+        // variable c has a different lifetime in each branch of the if-statement.
+        // In the then-block, c is used in the expression c.to_ascii_uppercase(). 
+        // Therefore *v does not regain the W permission until after that line.
+    } else {
+        println!("Already capitalized: {:?}", v);
+    }
+}
+
+
+
+
+
+
+
+
+
+
+// //!Pointer Safety Principle: data should never be aliased and mutated at the same time.
+
+// fn main(){
+
+//     let mut v = vec![1,2,3];
+//     let num = &v[1];
+//     v.push(4);
+//     println!("Third element is {}", *num);
+
+// }
 
 
 // fn main(){
